@@ -1,4 +1,3 @@
-```python
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
@@ -17,6 +16,10 @@ app.add_middleware(
 incidents = []
 
 
+def get_timestamp():
+    return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
 def create_incident(cpu, memory, latency):
     incident_type = "Healthy"
     severity = "Low"
@@ -28,13 +31,11 @@ def create_incident(cpu, memory, latency):
         severity = "High"
         root_cause = "High CPU Utilization"
         recommendation = "Scale application pods or increase node capacity"
-
     elif memory > 85:
         incident_type = "Resource Issue"
         severity = "High"
         root_cause = "High Memory Utilization"
         recommendation = "Increase memory limits or scale workload"
-
     elif latency > 700:
         incident_type = "Latency Issue"
         severity = "Medium"
@@ -49,7 +50,7 @@ def create_incident(cpu, memory, latency):
         "cpu": cpu,
         "memory": memory,
         "latency": latency,
-        "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+        "timestamp": get_timestamp(),
     }
 
 
@@ -57,13 +58,12 @@ def create_incident(cpu, memory, latency):
 def home():
     return {
         "message": "Enterprise AIOps Backend Running",
-        "status": "Healthy"
+        "status": "Healthy",
     }
 
 
 @app.get("/metrics-summary")
 def metrics_summary():
-
     cpu = random.randint(10, 95)
     memory = random.randint(20, 95)
     latency = random.randint(50, 1000)
@@ -72,17 +72,14 @@ def metrics_summary():
 
     if cpu > 80 or memory > 85 or latency > 700:
         status = "Incident Detected"
-
         incident = create_incident(cpu, memory, latency)
-
-        if incident["type"] != "Healthy":
-            incidents.append(incident)
+        incidents.append(incident)
 
     return {
         "cpu": cpu,
         "memory": memory,
         "latency": latency,
-        "status": status
+        "status": status,
     }
 
 
@@ -93,26 +90,24 @@ def get_incidents():
 
 @app.get("/simulate-error")
 def simulate_error():
-
     incident = {
         "type": "Application Failure",
         "severity": "Critical",
         "root_cause": "HTTP 500 Internal Server Error",
         "recommendation": "Check application logs and restart affected service",
-        "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+        "timestamp": get_timestamp(),
     }
 
     incidents.append(incident)
 
     return {
         "status": "error simulated",
-        "incident": incident
+        "incident": incident,
     }
 
 
 @app.get("/health")
 def health():
     return {
-        "status": "UP"
+        "status": "UP",
     }
-```
