@@ -1,0 +1,66 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-alert-rules
+  namespace: monitoring
+
+data:
+  aiops-alerts.yml: |
+    groups:
+      - name: aiops-alerts
+
+        rules:
+
+          - alert: BackendDown
+            expr: up == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Backend Service Down"
+              description: "One or more monitored services are down."
+
+          - alert: PodRestartDetected
+            expr: increase(kube_pod_container_status_restarts_total[5m]) > 3
+            for: 1m
+            labels:
+              severity: high
+            annotations:
+              summary: "Pod Restart Detected"
+              description: "A pod restarted more than 3 times within 5 minutes."
+
+          - alert: HighCPUUsage
+            expr: rate(container_cpu_usage_seconds_total[5m]) * 100 > 80
+            for: 2m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High CPU Usage"
+              description: "CPU usage exceeded 80 percent."
+
+          - alert: HighMemoryUsage
+            expr: (container_memory_usage_bytes / 1024 / 1024) > 500
+            for: 2m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High Memory Usage"
+              description: "Memory usage exceeded 500 MB."
+
+          - alert: NodeExporterDown
+            expr: up{job="prometheus-node-exporter"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Node Exporter Down"
+              description: "Node exporter is unreachable."
+
+          - alert: PrometheusServerDown
+            expr: up{job="prometheus"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Prometheus Server Down"
+              description: "Prometheus server is unreachable."
