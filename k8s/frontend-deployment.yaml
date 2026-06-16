@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aiops-frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aiops-frontend
+  template:
+    metadata:
+      labels:
+        app: aiops-frontend
+    spec:
+      containers:
+        - name: aiops-frontend
+          image: 859925121306.dkr.ecr.ap-south-1.amazonaws.com/aiops-frontend:latest
+          ports:
+            - containerPort: 80
