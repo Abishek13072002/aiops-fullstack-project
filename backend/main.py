@@ -3,14 +3,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
 import random
 import os
+import json
+import boto3
 
-try:
-    from openai import OpenAI
-except ImportError:
-    OpenAI = None
-
-
-app = FastAPI(title="Enterprise AIOps Backend")
+app = FastAPI(title="Enterprise AIOps Backend with AWS Bedrock")
 
 app.add_middleware(
     CORSMiddleware,
@@ -27,56 +23,50 @@ def get_timestamp():
     return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
-def get_openai_client():
-    api_key = os.getenv("OPENAI_API_KEY")
-
-    if not api_key:
-        return None
-
-    if OpenAI is None:
-        return None
-
-    return OpenAI(api_key=api_key)
-
-
 def create_incident(cpu, memory, latency):
-    incident_type = "Healthy"
-    severity = "Low"
-    root_cause = "No issues detected"
-    recommendation = "System operating normally"
-
     if cpu > 80:
-        incident_type = "Performance Issue"
-        severity = "High"
-        root_cause = "High CPU Utilization"
-        recommendation = "Scale application pods or increase node capacity"
-    elif memory > 85:
-        incident_type = "Resource Issue"
-        severity = "High"
-        root_cause = "High Memory Utilization"
-        recommendation = "Increase memory limits or scale workload"
-    elif latency > 700:
-        incident_type = "Latency Issue"
-        severity = "Medium"
-        root_cause = "High Response Time"
-        recommendation = "Investigate network latency and application performance"
+        return {
+            "type": "Performance Issue",
+            "severity": "High",
+            "root_cause": "High CPU Utilization",
+            "recommendation": "Scale application pods or increase node capacity",
+            "cpu": cpu,
+            "memory": memory,
+            "latency": latency,
+            "timestamp": get_timestamp(),
+        }
 
-    return {
-        "type": incident_type,
-        "severity": severity,
-        "root_cause": root_cause,
-        "recommendation": recommendation,
-        "cpu": cpu,
-        "memory": memory,
-        "latency": latency,
-        "timestamp": get_timestamp(),
-    }
+    if memory > 85:
+        return {
+            "type": "Resource Issue",
+            "severity": "High",
+            "root_cause": "High Memory Utilization",
+            "recommendation": "Increase memory limits or scale workload",
+            "cpu": cpu,
+            "memory": memory,
+            "latency": latency,
+            "timestamp": get_timestamp(),
+        }
+
+    if latency > 700:
+        return {
+            "type": "Latency Issue",
+            "severity": "Medium",
+            "root_cause": "High Response Time",
+            "recommendation": "Investigate network latency and application performance",
+            "cpu": cpu,
+            "memory": memory,
+            "latency": latency,
+            "timestamp": get_timestamp(),
+        }
+
+    return None
 
 
 @app.get("/")
 def home():
     return {
-        "message": "Enterprise AIOps Backend Running",
+        "message": "Enterprise AIOps Backend Running with AWS Bedrock",
         "status": "Healthy",
     }
 
@@ -88,10 +78,10 @@ def metrics_summary():
     latency = random.randint(50, 1000)
 
     status = "Healthy"
+    incident = create_incident(cpu, memory, latency)
 
-    if cpu > 80 or memory > 85 or latency > 700:
+    if incident:
         status = "Incident Detected"
-        incident = create_incident(cpu, memory, latency)
         incidents.append(incident)
 
     return {
@@ -131,54 +121,68 @@ def ai_root_cause():
         "message": "No incidents available"
     }
 
-    client = get_openai_client()
-
-    if client is None:
-        return {
-            "incident": latest_incident,
-            "ai_analysis": {
-                "root_cause": "OpenAI API key is not configured or OpenAI package is missing.",
-                "severity": "Unknown",
-                "business_impact": "AI analysis is currently unavailable.",
-                "recommended_fix": "Verify OPENAI_API_KEY Kubernetes secret and requirements.txt.",
-                "prevention_step": "Ensure CI/CD pipeline installs the openai package and injects the secret."
-            }
-        }
+    region = os.getenv("AWS_REGION", "us-east-1")
+    model_id = os.getenv(
+        "BEDROCK_MODEL_ID",
+        "anthropic.claude-3-haiku-20240307-v1:0"
+    )
 
     prompt = f"""
 You are an enterprise AIOps engineer.
 
-Analyze the following incident and provide:
-1. Root cause
+Analyze the following production incident and provide:
+1. Root Cause
 2. Severity
-3. Business impact
-4. Recommended fix
-5. Prevention step
+3. Business Impact
+4. Recommended Fix
+5. Prevention Step
 
 Incident:
 {latest_incident}
 """
 
     try:
-        response = client.responses.create(
-            model="gpt-4.1-mini",
-            input=prompt
+        bedrock = boto3.client("bedrock-runtime", region_name=region)
+
+        request_body = {
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": 500,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+        }
+
+        response = bedrock.invoke_model(
+            modelId=model_id,
+            body=json.dumps(request_body),
+            contentType="application/json",
+            accept="application/json"
         )
+
+        response_body = json.loads(response["body"].read())
+        ai_text = response_body["content"][0]["text"]
 
         return {
             "incident": latest_incident,
-            "ai_analysis": response.output_text
+            "ai_provider": "AWS Bedrock",
+            "model": model_id,
+            "ai_analysis": ai_text
         }
 
     except Exception as error:
         return {
             "incident": latest_incident,
+            "ai_provider": "AWS Bedrock",
+            "model": model_id,
             "ai_analysis": {
-                "root_cause": "AI analysis request failed.",
+                "root_cause": "Bedrock analysis failed",
                 "severity": "Unknown",
-                "business_impact": "AI-based root cause analysis could not be completed.",
+                "business_impact": "AI root cause analysis unavailable",
                 "recommended_fix": str(error),
-                "prevention_step": "Check OpenAI API key, network access, model name, and package version."
+                "prevention_step": "Check IAM permission, Bedrock model access, AWS region, and model ID"
             }
         }
 
