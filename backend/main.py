@@ -2,6 +2,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
 import random
+import os
+
+try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None
+
 
 app = FastAPI(title="Enterprise AIOps Backend")
 
@@ -18,6 +25,18 @@ incidents = []
 
 def get_timestamp():
     return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def get_openai_client():
+    api_key = os.getenv("OPENAI_API_KEY")
+
+    if not api_key:
+        return None
+
+    if OpenAI is None:
+        return None
+
+    return OpenAI(api_key=api_key)
 
 
 def create_incident(cpu, memory, latency):
@@ -104,6 +123,64 @@ def simulate_error():
         "status": "error simulated",
         "incident": incident,
     }
+
+
+@app.get("/ai-root-cause")
+def ai_root_cause():
+    latest_incident = incidents[-1] if incidents else {
+        "message": "No incidents available"
+    }
+
+    client = get_openai_client()
+
+    if client is None:
+        return {
+            "incident": latest_incident,
+            "ai_analysis": {
+                "root_cause": "OpenAI API key is not configured or OpenAI package is missing.",
+                "severity": "Unknown",
+                "business_impact": "AI analysis is currently unavailable.",
+                "recommended_fix": "Verify OPENAI_API_KEY Kubernetes secret and requirements.txt.",
+                "prevention_step": "Ensure CI/CD pipeline installs the openai package and injects the secret."
+            }
+        }
+
+    prompt = f"""
+You are an enterprise AIOps engineer.
+
+Analyze the following incident and provide:
+1. Root cause
+2. Severity
+3. Business impact
+4. Recommended fix
+5. Prevention step
+
+Incident:
+{latest_incident}
+"""
+
+    try:
+        response = client.responses.create(
+            model="gpt-4.1-mini",
+            input=prompt
+        )
+
+        return {
+            "incident": latest_incident,
+            "ai_analysis": response.output_text
+        }
+
+    except Exception as error:
+        return {
+            "incident": latest_incident,
+            "ai_analysis": {
+                "root_cause": "AI analysis request failed.",
+                "severity": "Unknown",
+                "business_impact": "AI-based root cause analysis could not be completed.",
+                "recommended_fix": str(error),
+                "prevention_step": "Check OpenAI API key, network access, model name, and package version."
+            }
+        }
 
 
 @app.get("/health")
