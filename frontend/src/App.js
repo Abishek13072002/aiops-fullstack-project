@@ -10,7 +10,7 @@ function App() {
 
   const [incidents, setIncidents] = useState([]);
 
-  const backendUrl = "http://a94ed1c0ff1794fedbd10f3ef7a56df4-455779412.ap-south-1.elb.amazonaws.com";
+  const backendUrl = "http://a70ddf5e3581947ebac9f2d87793af7d-1117394785.ap-south-1.elb.amazonaws.com";
 
   const loadData = async () => {
     try {

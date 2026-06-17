@@ -1,0 +1,56 @@
+serverFiles:
+  alerting_rules.yml:
+    groups:
+      - name: aiops-alerts
+        rules:
+          - alert: AIOpsTestAlert
+            expr: vector(1)
+            for: 30s
+            labels:
+              severity: critical
+            annotations:
+              summary: "AIOps test alert"
+              description: "This is a test alert to verify Prometheus alerting."
+
+          - alert: BackendDown
+            expr: up == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Backend service is down"
+              description: "One or more monitored services are down."
+
+          - alert: PodRestartDetected
+            expr: increase(kube_pod_container_status_restarts_total[5m]) > 3
+            for: 1m
+            labels:
+              severity: high
+            annotations:
+              summary: "Pod restart detected"
+              description: "A pod restarted more than 3 times in 5 minutes."
+
+          - alert: HighCPUUsage
+            expr: rate(container_cpu_usage_seconds_total[5m]) * 100 > 80
+            for: 2m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High CPU usage detected"
+              description: "Container CPU usage is above 80 percent."
+
+          - alert: HighMemoryUsage
+            expr: container_memory_usage_bytes > 500000000
+            for: 2m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High memory usage detected"
+              description: "Container memory usage is above 500 MB."
+
+server:
+  extraFlags:
+    - web.enable-lifecycle
+
+alertmanager:
+  enabled: false
