@@ -2,10 +2,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
 import random
+import requests
 
 from kubernetes import client, config
 
-app = FastAPI(title="Enterprise AIOps Backend with Approval Based Self Healing")
+app = FastAPI(title="Enterprise AIOps Backend with Auto Scaling Self-Healing")
 
 app.add_middleware(
     CORSMiddleware,
@@ -16,12 +17,15 @@ app.add_middleware(
 )
 
 incidents = []
+
 last_metrics = {
     "cpu": 0,
     "memory": 0,
     "latency": 0,
+    "node_cpu": 0,
     "status": "Healthy",
-    "self_heal_required": False
+    "self_heal_required": False,
+    "auto_scaled": False,
 }
 
 
@@ -29,56 +33,128 @@ def get_timestamp():
     return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
-def create_incident(cpu, memory, latency):
-    if cpu > 90:
+def load_k8s_config():
+    try:
+        config.load_incluster_config()
+    except Exception:
+        config.load_kube_config()
+
+
+def get_backend_replicas():
+    load_k8s_config()
+    apps_v1 = client.AppsV1Api()
+
+    scale = apps_v1.read_namespaced_deployment_scale(
+        name="aiops-backend",
+        namespace="default",
+    )
+
+    return scale.spec.replicas
+
+
+def scale_backend(replicas):
+    load_k8s_config()
+    apps_v1 = client.AppsV1Api()
+
+    scale = apps_v1.read_namespaced_deployment_scale(
+        name="aiops-backend",
+        namespace="default",
+    )
+
+    old_replicas = scale.spec.replicas
+    scale.spec.replicas = replicas
+
+    apps_v1.patch_namespaced_deployment_scale(
+        name="aiops-backend",
+        namespace="default",
+        body=scale,
+    )
+
+    return old_replicas, replicas
+
+
+def get_node_cpu_from_metrics_api():
+    try:
+        load_k8s_config()
+
+        api_client = client.ApiClient()
+        custom_api = client.CustomObjectsApi(api_client)
+
+        metrics = custom_api.list_cluster_custom_object(
+            group="metrics.k8s.io",
+            version="v1beta1",
+            plural="nodes",
+        )
+
+        total_cpu_millicores = 0
+        total_node_count = 0
+
+        for item in metrics.get("items", []):
+            cpu_value = item["usage"]["cpu"]
+
+            if cpu_value.endswith("n"):
+                cpu_millicores = int(cpu_value.replace("n", "")) / 1000000
+            elif cpu_value.endswith("u"):
+                cpu_millicores = int(cpu_value.replace("u", "")) / 1000
+            elif cpu_value.endswith("m"):
+                cpu_millicores = int(cpu_value.replace("m", ""))
+            else:
+                cpu_millicores = int(cpu_value) * 1000
+
+            total_cpu_millicores += cpu_millicores
+            total_node_count += 1
+
+        if total_node_count == 0:
+            return 0
+
+        # Demo calculation. This converts usage into a readable percentage-like value.
+        average_millicores = total_cpu_millicores / total_node_count
+        node_cpu_percent = min(round((average_millicores / 1000) * 100), 100)
+
+        return node_cpu_percent
+
+    except Exception:
+        # fallback for demo if metrics API fails
+        return random.randint(40, 95)
+
+
+def create_incident(cpu, memory, latency, node_cpu):
+    if node_cpu > 90:
         return {
-            "type": "High CPU Auto-Heal Required",
+            "type": "Node CPU Auto Scale Up",
             "severity": "Critical",
-            "root_cause": "CPU utilization exceeded 90%",
-            "recommendation": "Approve self-healing to scale backend pods to 3 replicas",
+            "root_cause": "Node CPU exceeded 90%",
+            "recommendation": "Automatically scale backend deployment up",
             "cpu": cpu,
             "memory": memory,
             "latency": latency,
-            "self_heal_required": True,
+            "node_cpu": node_cpu,
+            "timestamp": get_timestamp(),
+        }
+
+    if node_cpu < 70:
+        return {
+            "type": "Node CPU Auto Scale Down",
+            "severity": "Low",
+            "root_cause": "Node CPU dropped below 70%",
+            "recommendation": "Automatically scale backend deployment down",
+            "cpu": cpu,
+            "memory": memory,
+            "latency": latency,
+            "node_cpu": node_cpu,
             "timestamp": get_timestamp(),
         }
 
     if cpu > 80:
         return {
-            "type": "Performance Issue",
+            "type": "Application Performance Issue",
             "severity": "High",
-            "root_cause": "High CPU Utilization",
-            "recommendation": "Monitor CPU usage and prepare for scaling",
+            "root_cause": "Application CPU utilization is high",
+            "recommendation": "Monitor application workload",
             "cpu": cpu,
             "memory": memory,
             "latency": latency,
-            "self_heal_required": False,
-            "timestamp": get_timestamp(),
-        }
-
-    if memory > 85:
-        return {
-            "type": "Resource Issue",
-            "severity": "High",
-            "root_cause": "High Memory Utilization",
-            "recommendation": "Increase memory limits or scale workload",
-            "cpu": cpu,
-            "memory": memory,
-            "latency": latency,
-            "self_heal_required": False,
-            "timestamp": get_timestamp(),
-        }
-
-    if latency > 700:
-        return {
-            "type": "Latency Issue",
-            "severity": "Medium",
-            "root_cause": "High Response Time",
-            "recommendation": "Investigate network latency and application performance",
-            "cpu": cpu,
-            "memory": memory,
-            "latency": latency,
-            "self_heal_required": False,
+            "node_cpu": node_cpu,
             "timestamp": get_timestamp(),
         }
 
@@ -88,8 +164,8 @@ def create_incident(cpu, memory, latency):
 @app.get("/")
 def home():
     return {
-        "message": "Enterprise AIOps Backend Running with Approval Based Self Healing",
-        "status": "Healthy"
+        "message": "Enterprise AIOps Backend Running with Node CPU Auto Scaling",
+        "status": "Healthy",
     }
 
 
@@ -100,23 +176,61 @@ def metrics_summary():
     cpu = random.randint(10, 98)
     memory = random.randint(20, 95)
     latency = random.randint(50, 1000)
+    node_cpu = get_node_cpu_from_metrics_api()
 
     status = "Healthy"
-    self_heal_required = False
+    auto_scaled = False
 
-    incident = create_incident(cpu, memory, latency)
+    current_replicas = get_backend_replicas()
 
-    if incident:
-        status = "Incident Detected"
-        self_heal_required = incident["self_heal_required"]
-        incidents.append(incident)
+    if node_cpu > 90 and current_replicas < 4:
+        old, new = scale_backend(4)
+        auto_scaled = True
+        status = "Auto Scaled Up"
+
+        incidents.append({
+            "type": "Auto Scale Up Executed",
+            "severity": "Critical",
+            "root_cause": "Node CPU exceeded 90%",
+            "recommendation": "Backend replicas increased automatically",
+            "node_cpu": node_cpu,
+            "old_replicas": old,
+            "new_replicas": new,
+            "timestamp": get_timestamp(),
+        })
+
+    elif node_cpu < 70 and current_replicas > 2:
+        old, new = scale_backend(2)
+        auto_scaled = True
+        status = "Auto Scaled Down"
+
+        incidents.append({
+            "type": "Auto Scale Down Executed",
+            "severity": "Resolved",
+            "root_cause": "Node CPU dropped below 70%",
+            "recommendation": "Backend replicas reduced automatically",
+            "node_cpu": node_cpu,
+            "old_replicas": old,
+            "new_replicas": new,
+            "timestamp": get_timestamp(),
+        })
+
+    else:
+        incident = create_incident(cpu, memory, latency, node_cpu)
+
+        if incident:
+            status = "Incident Detected"
+            incidents.append(incident)
 
     last_metrics = {
         "cpu": cpu,
         "memory": memory,
         "latency": latency,
+        "node_cpu": node_cpu,
         "status": status,
-        "self_heal_required": self_heal_required
+        "self_heal_required": False,
+        "auto_scaled": auto_scaled,
+        "current_replicas": get_backend_replicas(),
     }
 
     return last_metrics
@@ -127,55 +241,44 @@ def get_incidents():
     return incidents[-20:]
 
 
-@app.post("/approve-self-heal")
-@app.get("/approve-self-heal")
-def approve_self_heal():
-    try:
-        config.load_incluster_config()
+@app.get("/simulate-high-node-cpu")
+def simulate_high_node_cpu():
+    old, new = scale_backend(4)
 
-        apps_v1 = client.AppsV1Api()
+    incident = {
+        "type": "Simulated Auto Scale Up",
+        "severity": "Critical",
+        "root_cause": "Simulated node CPU above 90%",
+        "recommendation": "Backend scaled up automatically",
+        "node_cpu": 95,
+        "old_replicas": old,
+        "new_replicas": new,
+        "timestamp": get_timestamp(),
+    }
 
-        deployment_name = "aiops-backend"
-        namespace = "default"
+    incidents.append(incident)
 
-        scale = apps_v1.read_namespaced_deployment_scale(
-            name=deployment_name,
-            namespace=namespace
-        )
+    return incident
 
-        old_replicas = scale.spec.replicas
-        scale.spec.replicas = 3
 
-        apps_v1.patch_namespaced_deployment_scale(
-            name=deployment_name,
-            namespace=namespace,
-            body=scale
-        )
+@app.get("/simulate-low-node-cpu")
+def simulate_low_node_cpu():
+    old, new = scale_backend(2)
 
-        remediation_incident = {
-            "type": "Self Healing Approved",
-            "severity": "Resolved",
-            "root_cause": "High CPU utilization exceeded 90%",
-            "recommendation": "Backend deployment scaled successfully",
-            "old_replicas": old_replicas,
-            "new_replicas": 3,
-            "timestamp": get_timestamp()
-        }
+    incident = {
+        "type": "Simulated Auto Scale Down",
+        "severity": "Resolved",
+        "root_cause": "Simulated node CPU below 70%",
+        "recommendation": "Backend scaled down automatically",
+        "node_cpu": 60,
+        "old_replicas": old,
+        "new_replicas": new,
+        "timestamp": get_timestamp(),
+    }
 
-        incidents.append(remediation_incident)
+    incidents.append(incident)
 
-        return {
-            "status": "Self healing executed successfully",
-            "deployment": deployment_name,
-            "old_replicas": old_replicas,
-            "new_replicas": 3
-        }
-
-    except Exception as error:
-        return {
-            "status": "Self healing failed",
-            "error": str(error)
-        }
+    return incident
 
 
 @app.get("/simulate-error")
@@ -185,7 +288,6 @@ def simulate_error():
         "severity": "Critical",
         "root_cause": "HTTP 500 Internal Server Error",
         "recommendation": "Check application logs and restart affected service",
-        "self_heal_required": False,
         "timestamp": get_timestamp(),
     }
 
@@ -193,12 +295,12 @@ def simulate_error():
 
     return {
         "status": "error simulated",
-        "incident": incident
+        "incident": incident,
     }
 
 
 @app.get("/health")
 def health():
     return {
-        "status": "UP"
+        "status": "UP",
     }

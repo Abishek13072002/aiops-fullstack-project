@@ -29,3 +29,30 @@ roleRef:
   kind: Role
   name: aiops-remediation-role
   apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: aiops-node-metrics-reader
+rules:
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aiops-node-metrics-reader-binding
+subjects:
+  - kind: ServiceAccount
+    name: aiops-remediation-sa
+    namespace: default
+roleRef:
+  kind: ClusterRole
+  name: aiops-node-metrics-reader
+  apiGroup: rbac.authorization.k8s.io
