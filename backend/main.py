@@ -2,11 +2,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
 import random
-import os
-import json
-import boto3
 
-app = FastAPI(title="Enterprise AIOps Backend with AWS Bedrock")
+from kubernetes import client, config
+
+app = FastAPI(title="Enterprise AIOps Backend with Approval Based Self Healing")
 
 app.add_middleware(
     CORSMiddleware,
@@ -17,6 +16,13 @@ app.add_middleware(
 )
 
 incidents = []
+last_metrics = {
+    "cpu": 0,
+    "memory": 0,
+    "latency": 0,
+    "status": "Healthy",
+    "self_heal_required": False
+}
 
 
 def get_timestamp():
@@ -24,15 +30,29 @@ def get_timestamp():
 
 
 def create_incident(cpu, memory, latency):
+    if cpu > 90:
+        return {
+            "type": "High CPU Auto-Heal Required",
+            "severity": "Critical",
+            "root_cause": "CPU utilization exceeded 90%",
+            "recommendation": "Approve self-healing to scale backend pods to 3 replicas",
+            "cpu": cpu,
+            "memory": memory,
+            "latency": latency,
+            "self_heal_required": True,
+            "timestamp": get_timestamp(),
+        }
+
     if cpu > 80:
         return {
             "type": "Performance Issue",
             "severity": "High",
             "root_cause": "High CPU Utilization",
-            "recommendation": "Scale application pods or increase node capacity",
+            "recommendation": "Monitor CPU usage and prepare for scaling",
             "cpu": cpu,
             "memory": memory,
             "latency": latency,
+            "self_heal_required": False,
             "timestamp": get_timestamp(),
         }
 
@@ -45,6 +65,7 @@ def create_incident(cpu, memory, latency):
             "cpu": cpu,
             "memory": memory,
             "latency": latency,
+            "self_heal_required": False,
             "timestamp": get_timestamp(),
         }
 
@@ -57,6 +78,7 @@ def create_incident(cpu, memory, latency):
             "cpu": cpu,
             "memory": memory,
             "latency": latency,
+            "self_heal_required": False,
             "timestamp": get_timestamp(),
         }
 
@@ -66,35 +88,94 @@ def create_incident(cpu, memory, latency):
 @app.get("/")
 def home():
     return {
-        "message": "Enterprise AIOps Backend Running with AWS Bedrock",
-        "status": "Healthy",
+        "message": "Enterprise AIOps Backend Running with Approval Based Self Healing",
+        "status": "Healthy"
     }
 
 
 @app.get("/metrics-summary")
 def metrics_summary():
-    cpu = random.randint(10, 95)
+    global last_metrics
+
+    cpu = random.randint(10, 98)
     memory = random.randint(20, 95)
     latency = random.randint(50, 1000)
 
     status = "Healthy"
+    self_heal_required = False
+
     incident = create_incident(cpu, memory, latency)
 
     if incident:
         status = "Incident Detected"
+        self_heal_required = incident["self_heal_required"]
         incidents.append(incident)
 
-    return {
+    last_metrics = {
         "cpu": cpu,
         "memory": memory,
         "latency": latency,
         "status": status,
+        "self_heal_required": self_heal_required
     }
+
+    return last_metrics
 
 
 @app.get("/incidents")
 def get_incidents():
     return incidents[-20:]
+
+
+@app.post("/approve-self-heal")
+@app.get("/approve-self-heal")
+def approve_self_heal():
+    try:
+        config.load_incluster_config()
+
+        apps_v1 = client.AppsV1Api()
+
+        deployment_name = "aiops-backend"
+        namespace = "default"
+
+        scale = apps_v1.read_namespaced_deployment_scale(
+            name=deployment_name,
+            namespace=namespace
+        )
+
+        old_replicas = scale.spec.replicas
+        scale.spec.replicas = 3
+
+        apps_v1.patch_namespaced_deployment_scale(
+            name=deployment_name,
+            namespace=namespace,
+            body=scale
+        )
+
+        remediation_incident = {
+            "type": "Self Healing Approved",
+            "severity": "Resolved",
+            "root_cause": "High CPU utilization exceeded 90%",
+            "recommendation": "Backend deployment scaled successfully",
+            "old_replicas": old_replicas,
+            "new_replicas": 3,
+            "timestamp": get_timestamp()
+        }
+
+        incidents.append(remediation_incident)
+
+        return {
+            "status": "Self healing executed successfully",
+            "deployment": deployment_name,
+            "old_replicas": old_replicas,
+            "new_replicas": 3
+        }
+
+    except Exception as error:
+        return {
+            "status": "Self healing failed",
+            "error": str(error)
+        }
 
 
 @app.get("/simulate-error")
@@ -104,6 +185,7 @@ def simulate_error():
         "severity": "Critical",
         "root_cause": "HTTP 500 Internal Server Error",
         "recommendation": "Check application logs and restart affected service",
+        "self_heal_required": False,
         "timestamp": get_timestamp(),
     }
 
@@ -111,84 +193,12 @@ def simulate_error():
 
     return {
         "status": "error simulated",
-        "incident": incident,
+        "incident": incident
     }
-
-
-@app.get("/ai-root-cause")
-def ai_root_cause():
-    latest_incident = incidents[-1] if incidents else {
-        "message": "No incidents available"
-    }
-
-    region = os.getenv("AWS_REGION", "us-east-1")
-    model_id = os.getenv(
-        "BEDROCK_MODEL_ID",
-        "anthropic.claude-3-haiku-20240307-v1:0"
-    )
-
-    prompt = f"""
-You are an enterprise AIOps engineer.
-
-Analyze the following production incident and provide:
-1. Root Cause
-2. Severity
-3. Business Impact
-4. Recommended Fix
-5. Prevention Step
-
-Incident:
-{latest_incident}
-"""
-
-    try:
-        bedrock = boto3.client("bedrock-runtime", region_name=region)
-
-        request_body = {
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": 500,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ]
-        }
-
-        response = bedrock.invoke_model(
-            modelId=model_id,
-            body=json.dumps(request_body),
-            contentType="application/json",
-            accept="application/json"
-        )
-
-        response_body = json.loads(response["body"].read())
-        ai_text = response_body["content"][0]["text"]
-
-        return {
-            "incident": latest_incident,
-            "ai_provider": "AWS Bedrock",
-            "model": model_id,
-            "ai_analysis": ai_text
-        }
-
-    except Exception as error:
-        return {
-            "incident": latest_incident,
-            "ai_provider": "AWS Bedrock",
-            "model": model_id,
-            "ai_analysis": {
-                "root_cause": "Bedrock analysis failed",
-                "severity": "Unknown",
-                "business_impact": "AI root cause analysis unavailable",
-                "recommended_fix": str(error),
-                "prevention_step": "Check IAM permission, Bedrock model access, AWS region, and model ID"
-            }
-        }
 
 
 @app.get("/health")
 def health():
     return {
-        "status": "UP",
+        "status": "UP"
     }

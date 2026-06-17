@@ -5,10 +5,12 @@ function App() {
     cpu: 0,
     memory: 0,
     latency: 0,
-    status: "Loading..."
+    status: "Loading...",
+    self_heal_required: false
   });
 
   const [incidents, setIncidents] = useState([]);
+  const [healMessage, setHealMessage] = useState("");
 
   const backendUrl = "http://a70ddf5e3581947ebac9f2d87793af7d-1117394785.ap-south-1.elb.amazonaws.com";
 
@@ -31,6 +33,26 @@ function App() {
     loadData();
   };
 
+  const approveSelfHeal = async () => {
+    setHealMessage("Self-healing is in progress...");
+
+    try {
+      const response = await fetch(`${backendUrl}/approve-self-heal`, {
+        method: "POST"
+      });
+
+      const data = await response.json();
+
+      setHealMessage(
+        `Self-healing completed. Backend scaled from ${data.old_replicas} to ${data.new_replicas} replicas.`
+      );
+
+      loadData();
+    } catch (error) {
+      setHealMessage("Self-healing failed. Please check backend logs.");
+    }
+  };
+
   useEffect(() => {
     loadData();
     const interval = setInterval(loadData, 5000);
@@ -41,6 +63,7 @@ function App() {
     if (severity === "Critical") return "#dc2626";
     if (severity === "High") return "#f97316";
     if (severity === "Medium") return "#eab308";
+    if (severity === "Resolved") return "#16a34a";
     return "#16a34a";
   };
 
@@ -50,7 +73,7 @@ function App() {
         <div>
           <h1 style={styles.title}>Enterprise AIOps Platform</h1>
           <p style={styles.subtitle}>
-            Real-time incident detection, monitoring, log analytics, and AI-based recommendations
+            Monitoring, incident detection, approval-based self-healing, and Kubernetes remediation
           </p>
         </div>
         <div style={styles.badge}>AWS EKS • Prometheus • Loki • Grafana</div>
@@ -59,7 +82,9 @@ function App() {
       <div style={styles.grid}>
         <div style={styles.card}>
           <h3>CPU Usage</h3>
-          <h2>{metrics.cpu}%</h2>
+          <h2 style={{ color: metrics.cpu > 90 ? "#dc2626" : "#111827" }}>
+            {metrics.cpu}%
+          </h2>
         </div>
 
         <div style={styles.card}>
@@ -79,6 +104,26 @@ function App() {
           </h2>
         </div>
       </div>
+
+      {metrics.self_heal_required && (
+        <div style={styles.healCard}>
+          <div>
+            <h2>Critical CPU Threshold Breached</h2>
+            <p>
+              CPU usage is above 90%. Approval is required before automatic Kubernetes remediation.
+            </p>
+          </div>
+          <button style={styles.healButton} onClick={approveSelfHeal}>
+            Approve Self-Heal
+          </button>
+        </div>
+      )}
+
+      {healMessage && (
+        <div style={styles.messageBox}>
+          {healMessage}
+        </div>
+      )}
 
       <div style={styles.actionCard}>
         <div>
@@ -121,6 +166,12 @@ function App() {
                 {incident.cpu !== undefined && (
                   <p>
                     <strong>Metrics:</strong> CPU {incident.cpu}% | Memory {incident.memory}% | Latency {incident.latency} ms
+                  </p>
+                )}
+
+                {incident.self_heal_required && (
+                  <p style={{ color: "#dc2626", fontWeight: "bold" }}>
+                    Approval required for self-healing.
                   </p>
                 )}
               </div>
@@ -173,6 +224,33 @@ const styles = {
     padding: "25px",
     borderRadius: "18px",
     boxShadow: "0 10px 25px rgba(0,0,0,0.25)"
+  },
+  healCard: {
+    background: "#7f1d1d",
+    border: "1px solid #ef4444",
+    padding: "25px",
+    borderRadius: "18px",
+    marginBottom: "25px",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center"
+  },
+  healButton: {
+    background: "#22c55e",
+    color: "#ffffff",
+    padding: "14px 22px",
+    border: "none",
+    borderRadius: "10px",
+    fontWeight: "bold",
+    cursor: "pointer"
+  },
+  messageBox: {
+    background: "#ecfdf5",
+    color: "#065f46",
+    padding: "18px",
+    borderRadius: "12px",
+    marginBottom: "25px",
+    fontWeight: "bold"
   },
   actionCard: {
     background: "#1d4ed8",

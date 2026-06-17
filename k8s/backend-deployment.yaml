@@ -12,13 +12,10 @@ spec:
       labels:
         app: aiops-backend
     spec:
+      serviceAccountName: aiops-remediation-sa
       containers:
         - name: aiops-backend
           image: 859925121306.dkr.ecr.ap-south-1.amazonaws.com/aiops-backend:latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 8000
-          env:
-            - name: AWS_REGION
-              value: us-east-1
-            - name: BEDROCK_MODEL_ID
-              value: anthropic.claude-3-haiku-20240307-v1:0
